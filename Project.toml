@@ -3,6 +3,9 @@ uuid = "b4220cd3-ae9b-42fb-a9bf-abfa664eba8a"
 authors = ["caleb-allen <caleb.e.allen@gmail.com> and contributors"]
 version = "1.0.0-DEV"
 
+[deps]
+REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
+
 [compat]
 julia = "1"
 
