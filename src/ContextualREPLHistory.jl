@@ -4,58 +4,80 @@ using Base.Threads
 import Base.Threads.@spawn
 using REPL
 import REPL.LineEdit as LE
-export init, stop
+export load_proxy, stop, unload_proxy, annotate_history
+
+const HISTORY_NAME = REPL.find_hist_file()
+
+include("fix_history.jl")
 
 struct ReplContext
     dir::AbstractString
     git_branch::Union{Nothing,AbstractString}
 end
 
-hist_file = REPL.find_hist_file()
-function init()
+# hist_file = REPL.find_hist_file()
+function load_proxy()
     atexit() do
-        PROXYING[] = false
+        WATCHING[] = false
     end
-    PROXYING[] = true
-    @show history_name = REPL.find_hist_file()
-    @show proxy_filename = proxy_hist_filename(history_name)
-    rm(proxy_filename)
-    touch(proxy_filename)
-    ENV["JULIA_HISTORY"] = proxy_filename
-    t = @spawn begin
-        # try
-            proxy_history_file(history_name, proxy_filename)
-        # catch ex
-            # @error "History proxying failed" exception = (ex, catch_backtrace())
-        # end
-    end
-    errormonitor(t)
+    # PROXYING[] = true
+    # @show proxy = context_filename(HISTORY_NAME)
+    _, proxy = mktemp()
+    ENV["JULIA_HISTORY"] = proxy
+    # t = @spawn begin
+    # proxy_history_file(history_name, context_filename)
+    # end
+    # errormonitor(t)
     # read in the REPL history...
 end
-proxy_hist_filename(history_name) = [splitpath(history_name)[1:end-1]; "repl_context_proxy.jl"] |> joinpath
 
+function unload_proxy(repl)
+    hp::REPL.REPLHistoryProvider = LE.mode(repl.mistate).hist
+
+    hp.file_path = HISTORY_NAME
+    ENV["JULIA_HISTORY"] = HISTORY_NAME
+
+    # reset the repl to write to the standard history
+    close(hp.history_file)
+    f = open(hp.file_path, read=true, write=true, create=true)
+    hp.history_file = f
+    seekend(f)
+
+    
+end
+function context_filename(history_filename=REPL.find_hist_file())
+
+    paths = splitpath(history_filename)
+    context_filename = "contextual_proxy_" * paths[end]
+    return joinpath([paths[begin:end-1]; context_filename])
+end
 function stop()
-    PROXYING[] = false
+    WATCHING[] = false
 end
 
-const PROXYING = Ref{Bool}(true)
+const WATCHING = Ref{Bool}(true)
 
 """
     Proxy the HistoryProvider'
 """
-function proxy_history_file(history_name::AbstractString, proxy_name::AbstractString)
+function annotate_history(history_name=HISTORY_NAME,
+                          context_name=context_filename())
     # proxy = IOBuffer()
-    # pipe = run(pipeline(`tail -F $proxy_name`, stdout=proxy), wait=false)
-    # cmd = `tail -F $proxy_name`
+    # pipe = run(pipeline(`tail -F $context_name`, stdout=proxy), wait=false)
+    # cmd = `tail -F $context_name`
     # @show pipe
-    history_file = open("/home/caleb/.julia/logs/test_repl_history.jl", write=true)
+    # history_file = open(history_name, write=true)
     # history_file = open(history_name, write=true)
 
+    ispath(context_name) || cp(history_name, context_name)
+    ctx_file = open(context_name, write=true)
+    seekend(ctx_file)
+
     try
-        process = open(`tail -F $proxy_name`, read=true) do io
+        open(`tail -F $history_name`, read=true) do io
             @info "io" io typeof(io)
 
-            while PROXYING[]
+            while WATCHING[]
                 # data = readline(io)
                 if eof(io)
                     # sleep(0.5)
@@ -63,18 +85,19 @@ function proxy_history_file(history_name::AbstractString, proxy_name::AbstractSt
                     continue
                 end
                 data = readavailable(io) |> String
-                @info "reading proxy" data io
-                # sleep(2)
-                #
-                dir = " # path: " * pwd() * "\n"
-                print(history_file, dir)
-                print(history_file, data)
+                @info "reading history" data io
+
+                dir = " # dir: " * pwd() * "\n"
+                print(ctx_file, dir)
+                print(ctx_file, data)
+                flush(ctx_file)
             end
         end
         return
     finally
-        close(history_file)
+        close(ctx_file)
     end
 end
+
 
 end

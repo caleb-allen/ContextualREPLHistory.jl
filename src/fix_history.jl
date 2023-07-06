@@ -14,86 +14,54 @@
 # entries removed. A backup file will be created at `repl_history_backup.jl`
 # prior to any modifications.
 
-history_file = joinpath(homedir(), ".julia/logs/repl_history.jl")
-delete_entries = false
-if "--delete_corrupted" in ARGS
-    delete_entries = true
-end
-escape_entries = false
-if "--escape_corrupted" in ARGS
-    escape_entries = true
-end
-
-if escape_entries && delete_entries
-    println("Invalid parameters. Only use 1 of --escape_corrupted and --delete_corrupted")
-    exit(2)
-end
 
 struct HistoryEntry
     time::String
     mode::String
+    dir::String
     content::String
 end
 
 function is_hist_metadata(line::AbstractString)::Bool
-    rx = r"# (time|mode): .*"
+    rx = r"# (time|mode|dir): .*"
     match(rx, line) !== nothing
 end
-"""
-Find the lines that make up the history entry at `starting_line`, including commented lines for time and mode.
-"""
-function entry_lines(lines, starting_line::Int)::UnitRange
-    i = starting_line
-    metadata_entries = 0
-    while metadata_entries < 2
-        i -= 1
-        if is_hist_metadata(lines[i])
-            metadata_entries += 1
-        end
-    end
-    start = i
 
-    i = starting_line
-    metadata_entries = 0
-    while metadata_entries == 0
-        i += 1
-        if is_hist_metadata(lines[i])
-            metadata_entries += 1
-        end
-    end
-    endd = i
-    return start:endd
+function metadata_type(line::AbstractString)::Symbol
+    m = match(r"# (.+?):.*", line)
+    return m.captures[1] |> Symbol
 end
 
-function is_corrupted(entry::HistoryEntry)::Bool
-    bad_char = '\e'
-    return bad_char in entry.content
-end
-
-corrupted(entries::Vector{HistoryEntry})::Vector{HistoryEntry} = filter(is_corrupted, entries)
-uncorrupted(entries::Vector{HistoryEntry})::Vector{HistoryEntry} = filter(!is_corrupted, entries)
-
-function entries()::Vector{HistoryEntry}
+function entries(history_file=HISTORY_NAME)::Vector{HistoryEntry}
     entries = []
     metadata_lines = 0
 
-    time = nothing
-    mode = nothing
+    time = ""
+    mode = ""
+    dir = "# dir:"
     content = []
     for line in eachline(history_file)
         if is_hist_metadata(line)
+            type = metadata_type(line)
+            @assert type in (:time, :mode, :dir)
+            if type == :mode
+                mode = line
+            elseif type == :time
+                time = line
+            elseif type == :dir
+                dir = line
+            end
             if metadata_lines == 0
-                if time !== nothing && mode !== nothing
+                if time !== "" && mode !== ""
                     # create an entry value if necessary
                     push!(entries,
-                        HistoryEntry(time, mode, join(content, "\n")))
+                        HistoryEntry(time, mode, dir, join(content, "\n")))
                 end
-                # reset for a new entry
-                time = line
-                mode = nothing
-                content = []
-            elseif metadata_lines == 1
-                mode = line
+                # # reset for a new entry
+                # time = line
+                # mode = ""
+                dir = "# dir:"
+                empty!(content)
             end
             metadata_lines += 1
         else
@@ -122,60 +90,14 @@ function write_history(entries::Vector{HistoryEntry})
 end
 
 function Base.write(io::IO, e::HistoryEntry)
-    if is_corrupted(e)
-        print(io, e.time * "\n" * e.mode * "\n\t" * escape_string(e.content[2:end])) # exclude tab char
-    else
-        print(io, e.time * "\n" * e.mode * "\n" * e.content)
-    end
+    print(io, e.time * "\n" * e.mode * "\n" * e.content)
 end
-function Base.show(io::IO, e::HistoryEntry)
-    if is_corrupted(e)
-        println(io, "\t" * e.time * "\n\t" * e.mode * "\n\t\t" * escape_string(e.content))
-    else
-        println(io, "\t" * e.time * "\n\t" * e.mode * "\n\t" * e.content)
-    end
+function Base.show(io::IO, ::MIME"text/plain", e::HistoryEntry)
+    # if is_corrupted(e)
+    #     println(io, "\t" * e.time * "\n\t" * e.mode * "\n\t\t" * escape_string(e.content))
+    # else
+        println(io, "\t" * e.time * "\n\t" * e.mode * "\n\t" * e.dir * "\n\t" * e.content)
+    # end
 end
 
-function fix_history(; delete_entries=false, escape_entries=false)
-    es = entries()
-    corrupt = corrupted(es)
-    if isempty(corrupt)
-        println("No corrupt entries found.")
-        return
-    end
-    println("Found $(length(corrupt)) corrupted entries!")
 
-    es = if delete_entries
-        uncorrupted(entries())
-    elseif escape_entries
-        entries()
-    else
-        println(
-            """
-            run 
-               `./fix_history.jl --delete_entries`
-            or
-               `./fix_history.jl --escape_entries`
-            to fix and overwrite $history_file.""")
-        return
-    end
-
-    out_file = write_history(es)
-    println("Wrote history at $out_file")
-end
-
-fix_history(; delete_entries, escape_entries)
-
-
-mutable struct REPLHistoryProvider <: HistoryProvider
-    history::Vector{String}
-    file_path::String
-    history_file::Union{Nothing,IO}
-    start_idx::Int
-    cur_idx::Int
-    last_idx::Int
-    last_buffer::IOBuffer
-    last_mode::Union{Nothing,Prompt}
-    mode_mapping::Dict{Symbol,Prompt}
-    modes::Vector{Symbol}
-end
