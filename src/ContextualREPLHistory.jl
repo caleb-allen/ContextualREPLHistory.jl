@@ -4,7 +4,7 @@ using Base.Threads
 import Base.Threads.@spawn
 using REPL
 import REPL.LineEdit as LE
-export load_proxy, stop, unload_proxy, annotate_history
+export load_proxy, stop, unload_proxy, annotate_history, HistoryEntry
 
 const HISTORY_NAME = REPL.find_hist_file()
 
@@ -100,4 +100,8 @@ function annotate_history(history_name=HISTORY_NAME,
 end
 
 
+function debug()
+    
+    # run(`tail -F contextual_proxy_repl_history.jl`)
+end
 end

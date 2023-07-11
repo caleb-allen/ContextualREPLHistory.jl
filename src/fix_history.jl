@@ -14,22 +14,82 @@
 # entries removed. A backup file will be created at `repl_history_backup.jl`
 # prior to any modifications.
 
-
+using Dates, TimeZones
 struct HistoryEntry
-    time::String
-    mode::String
-    dir::String
     content::String
+    time::Tuple{DateTime,String} # timezone
+    mode::String
+    dir::Union{String,Nothing}
 end
 
-function is_hist_metadata(line::AbstractString)::Bool
+time(entry::HistoryEntry) = Dates.format(entry.time[1], dateformat"YYYY-mm-dd HH:MM:SS ") * entry.time[2]
+content(entry::HistoryEntry) = replace(entry.content, r"^"ms => "\t")
+
+
+function parse_time(time::String)::Tuple{DateTime,String}
+    time_parts = split(time)
+    t = join(time_parts[begin:end-1], " ")
+    time = DateTime(t, dateformat"YYYY-mm-dd HH:MM:SS")
+    tz = String(time_parts[end])
+    return (time, tz)
+    # df = Dates.DateFormat()
+    # tz = TimeZone(time[end-3:end])
+    # ZonedDateTime(time, "YYYY-mm-dd HH:MM:SSZ")
+end
+# time: $(Libc.strftime(, time()))
+HistoryEntry(content::String, time::String, mode::String, dir::Union{String,Nothing}=nothing) =
+    HistoryEntry(content, parse_time(time), mode, dir)
+HistoryEntry(;content::String, time::String=error("time parameter not set"),
+    mode::String=error("Mode should be set"),
+    dir::Union{String,Nothing}=nothing) =
+    HistoryEntry(content, parse_time(time), mode, dir)
+
+HistoryEntry(s::AbstractString) = HistoryEntry(IOBuffer(s))
+function HistoryEntry(buf::IO, args=[], content=String[])
+    time = nothing
+    mode = nothing
+    dir = nothing
+
+    finished_metadata = false
+    empty!(args)
+    empty!(content)
+    i = 0
+    while !eof(buf)
+        i > 5 && break
+        i += 1
+        # we don't want to keep reading past an entry
+        if finished_metadata && peek(buf, Char) == '#'
+            break
+        end
+        line = readline(buf)
+        if !finished_metadata && is_metadata(line)
+            arg = metadata(line)
+            push!(args, arg)
+        else
+            finished_metadata = true
+            @info "line" line escape_string(line)
+            code_line = match(r"\s(.*)", line)
+            # (code_line === nothing || length(code_line.captures) == 1) && error("Error while parsing line: `$(escape_string(line))`")
+            push!(content, code_line.captures[1])
+            @info "matches" code_line line
+            # push!(content, line)
+        end
+    end
+    # HistoryEntry(time, mode, dir, join(content, "\n"))
+    HistoryEntry(content=join(content, "\n"); args...)
+end
+
+function is_metadata(line::AbstractString)::Bool
     rx = r"# (time|mode|dir): .*"
     match(rx, line) !== nothing
 end
 
-function metadata_type(line::AbstractString)::Symbol
-    m = match(r"# (.+?):.*", line)
-    return m.captures[1] |> Symbol
+function metadata(line::AbstractString)::Tuple{Symbol,String}
+    m = match(r"# (.+?): (.*)", line)
+    type = m.captures[1] |> Symbol
+    @assert type in (:time, :mode, :dir)
+    data = m.captures[2]
+    return (type, data)
 end
 
 function entries(history_file=HISTORY_NAME)::Vector{HistoryEntry}
@@ -38,12 +98,11 @@ function entries(history_file=HISTORY_NAME)::Vector{HistoryEntry}
 
     time = ""
     mode = ""
-    dir = "# dir:"
+    dir = nothing
     content = []
     for line in eachline(history_file)
-        if is_hist_metadata(line)
-            type = metadata_type(line)
-            @assert type in (:time, :mode, :dir)
+        if is_metadata(line)
+            type = metadata(line)
             if type == :mode
                 mode = line
             elseif type == :time
@@ -55,12 +114,13 @@ function entries(history_file=HISTORY_NAME)::Vector{HistoryEntry}
                 if time !== "" && mode !== ""
                     # create an entry value if necessary
                     push!(entries,
-                        HistoryEntry(time, mode, dir, join(content, "\n")))
+                        HistoryEntry(join(content, "\n"), time, mode, dir))
                 end
                 # # reset for a new entry
                 # time = line
                 # mode = ""
-                dir = "# dir:"
+
+                dir = nothing
                 empty!(content)
             end
             metadata_lines += 1
@@ -90,14 +150,22 @@ function write_history(entries::Vector{HistoryEntry})
 end
 
 function Base.write(io::IO, e::HistoryEntry)
-    print(io, e.time * "\n" * e.mode * "\n" * e.content)
+    println(io, "# time: " * time(e))
+    println(io, "# mode: " * e.mode)
+    print(io, content(e))
+end
+function write_annotated(io::IO, e::HistoryEntry)
+    println(io, "# dir: " * e.dir)
+    println(io, "# time: " * time(e))
+    println(io, "# mode: " * e.mode)
+    print(io, content(e))
 end
 function Base.show(io::IO, ::MIME"text/plain", e::HistoryEntry)
-    # if is_corrupted(e)
-    #     println(io, "\t" * e.time * "\n\t" * e.mode * "\n\t\t" * escape_string(e.content))
-    # else
-        println(io, "\t" * e.time * "\n\t" * e.mode * "\n\t" * e.dir * "\n\t" * e.content)
-    # end
+    if e.dir === nothing
+        write(io, e)
+    else
+        write_annotated(io, e)
+    end
 end
 
 
