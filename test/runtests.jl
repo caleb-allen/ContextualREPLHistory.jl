@@ -32,6 +32,17 @@ end
     @test s == raw_entry
 end
 
+@testset "Parse with tricky whitespace" begin
+raw_entry = """# time: 2020-04-01 08:12:18 PDT
+# mode: julia
+\tmodule
+
+\t
+\tUtil
+\t
+\t;;
+end
+
 @testset "Parse a history entry" begin
     s = """
 # time: 2023-07-06 14:39:13 BST

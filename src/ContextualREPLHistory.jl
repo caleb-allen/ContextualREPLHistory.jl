@@ -4,31 +4,70 @@ using Base.Threads
 import Base.Threads.@spawn
 using REPL
 import REPL.LineEdit as LE
-export load_proxy, stop, unload_proxy, annotate_history, HistoryEntry
+export start, stop, unload_proxy, annotate_history, HistoryEntry
 
 const HISTORY_NAME = REPL.find_hist_file()
 
-include("fix_history.jl")
+include("history_entry.jl")
+include("parse_history.jl")
 
 struct ReplContext
     dir::AbstractString
     git_branch::Union{Nothing,AbstractString}
 end
 
-# hist_file = REPL.find_hist_file()
-function load_proxy()
+# Base.active_repl.interface.modes[1].hist.history
+# repl_hist() = 
+# error happening on entry at
+# time: 2021-03-30 12:58:10 PDT
+"""
+- Intercept the history file to be loaded
+- Re-order the history entries according to the context
+- Write the re-sorted history to the proxy
+"""
+function init()
+    # load_proxy()
+    
+    context_name = context_filename()
+    ispath(context_name) || cp(HISTORY_NAME, context_name)
+    @info "Parsing history" context_name
+    entries = parse_history(context_name)
+    
+    # @info "Sorting" by="string"
+    # sort!(entries, by=e->e.content; rev=true)
+    
+    # @info "Sorting" by="time"
+    # sort!(entries, by=e->e.time[1]; rev=true)
+
+    proxy_path = proxy_filename()
+    ispath(proxy_path) && rm(proxy_path)
+    touch(proxy_path)
+    load_proxy(entries)
+    ENV["JULIA_HISTORY"] = proxy_path
+    @info "loaded proxy history" proxy_path
+    
+    # write_entries(entries, )
+end
+
+function start(repl)
+    unload_proxy(repl)
+
+    t = @spawn annotate_history()
+    errormonitor(t)
+    
+end
+
+function load_proxy(entries=parse_history())
     atexit() do
         WATCHING[] = false
     end
-    # PROXYING[] = true
-    # @show proxy = context_filename(HISTORY_NAME)
-    _, proxy = mktemp()
-    ENV["JULIA_HISTORY"] = proxy
-    # t = @spawn begin
-    # proxy_history_file(history_name, context_filename)
-    # end
-    # errormonitor(t)
-    # read in the REPL history...
+    path = proxy_filename()
+    @info "Loading proxy history" path
+    
+    open(path, "w") do proxy
+        write(proxy, entries)
+        flush(proxy)
+    end
 end
 
 function unload_proxy(repl)
@@ -42,15 +81,19 @@ function unload_proxy(repl)
     f = open(hp.file_path, read=true, write=true, create=true)
     hp.history_file = f
     seekend(f)
-
-    
 end
-function context_filename(history_filename=REPL.find_hist_file())
 
+function context_filename(history_filename=REPL.find_hist_file())
     paths = splitpath(history_filename)
-    context_filename = "contextual_proxy_" * paths[end]
+    context_filename = "annotated_" * paths[end]
     return joinpath([paths[begin:end-1]; context_filename])
 end
+
+function proxy_filename(history_filename=REPL.find_hist_file())
+    paths = splitpath(history_filename)
+    return joinpath([paths[begin:end-1];".proxy_" * paths[end]])
+end
+
 function stop()
     WATCHING[] = false
 end
@@ -60,17 +103,8 @@ const WATCHING = Ref{Bool}(true)
 """
     Proxy the HistoryProvider'
 """
-function annotate_history(history_name=HISTORY_NAME,
-                          context_name=context_filename())
-    # proxy = IOBuffer()
-    # pipe = run(pipeline(`tail -F $context_name`, stdout=proxy), wait=false)
-    # cmd = `tail -F $context_name`
-    # @show pipe
-    # history_file = open(history_name, write=true)
-    # history_file = open(history_name, write=true)
-
-    ispath(context_name) || cp(history_name, context_name)
-    ctx_file = open(context_name, write=true)
+function annotate_history(history_name=HISTORY_NAME)
+    ctx_file = open(context_filename(), write=true)
     seekend(ctx_file)
 
     try
@@ -87,8 +121,8 @@ function annotate_history(history_name=HISTORY_NAME,
                 data = readavailable(io) |> String
                 @info "reading history" data io
 
-                dir = " # dir: " * pwd() * "\n"
-                print(ctx_file, dir)
+                dir = " # dir: " * pwd()
+                println(ctx_file, dir)
                 print(ctx_file, data)
                 flush(ctx_file)
             end

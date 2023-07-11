@@ -39,7 +39,7 @@ end
 # time: $(Libc.strftime(, time()))
 HistoryEntry(content::String, time::String, mode::String, dir::Union{String,Nothing}=nothing) =
     HistoryEntry(content, parse_time(time), mode, dir)
-HistoryEntry(;content::String, time::String=error("time parameter not set"),
+HistoryEntry(; content::String, time::String=error("time parameter not set"),
     mode::String=error("Mode should be set"),
     dir::Union{String,Nothing}=nothing) =
     HistoryEntry(content, parse_time(time), mode, dir)
@@ -55,8 +55,8 @@ function HistoryEntry(buf::IO, args=[], content=String[])
     empty!(content)
     i = 0
     while !eof(buf)
-        i > 5 && break
-        i += 1
+        # i > 5 && break
+        # i += 1
         # we don't want to keep reading past an entry
         if finished_metadata && peek(buf, Char) == '#'
             break
@@ -67,14 +67,15 @@ function HistoryEntry(buf::IO, args=[], content=String[])
             push!(args, arg)
         else
             finished_metadata = true
-            @info "line" line escape_string(line)
+            # @info "line" line escape_string(line)
             code_line = match(r"\s(.*)", line)
             # (code_line === nothing || length(code_line.captures) == 1) && error("Error while parsing line: `$(escape_string(line))`")
             push!(content, code_line.captures[1])
-            @info "matches" code_line line
+            # @info "matches" code_line line
             # push!(content, line)
         end
     end
+    # @info "New entry" args buf content
     # HistoryEntry(time, mode, dir, join(content, "\n"))
     HistoryEntry(content=join(content, "\n"); args...)
 end
@@ -150,15 +151,18 @@ function write_history(entries::Vector{HistoryEntry})
 end
 
 function Base.write(io::IO, e::HistoryEntry)
+    if e.dir !== nothing
+        println(io, "# dir: " * e.dir)
+    end
     println(io, "# time: " * time(e))
     println(io, "# mode: " * e.mode)
-    print(io, content(e))
+    println(io, content(e))
 end
 function write_annotated(io::IO, e::HistoryEntry)
     println(io, "# dir: " * e.dir)
     println(io, "# time: " * time(e))
     println(io, "# mode: " * e.mode)
-    print(io, content(e))
+    println(io, content(e))
 end
 function Base.show(io::IO, ::MIME"text/plain", e::HistoryEntry)
     if e.dir === nothing
@@ -166,6 +170,14 @@ function Base.show(io::IO, ::MIME"text/plain", e::HistoryEntry)
     else
         write_annotated(io, e)
     end
+end
+
+
+function Base.write(io::IO, entries::Vector{HistoryEntry})
+    for e in entries
+        write(io, e) 
+    end
+    flush(io)
 end
 
 
